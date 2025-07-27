@@ -1,0 +1,11 @@
+[package]
+name = "journald-notify-nu"
+version = "0.1.0"
+description = "A nushell package for converting systemd journal entries to desktop notifications"
+license = "MIT"
+authors = ["wvhulle"]
+repository = "https://github.com/wvhulle/journald-notify-nu"
+
+[dependencies]
+
+[dev-dependencies]
