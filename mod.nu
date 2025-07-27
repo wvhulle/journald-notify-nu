@@ -21,80 +21,91 @@ export def journalctl-prio-to-notify-prio [
 export def get-icon-from-unit [
     app: string  # Application/unit name
 ] {
-    let desktop_file_locations = [
-        $"($nu.home-path)/.nix-profile/share/applications"
-        "/run/current-system/sw/share/applications"
+    [
+        ($nu.home-path | path join ".nix-profile/share/applications")       # NixOS user profile
+        "/run/current-system/sw/share/applications"                        # NixOS system
+        ($nu.home-path | path join ".local/share/applications")            # User applications
+        "/usr/share/applications"                                          # System applications (Debian/Fedora/etc)
+        "/usr/local/share/applications"                                    # Local system applications
+        "/var/lib/flatpak/exports/share/applications"                      # Flatpak system
+        ($nu.home-path | path join ".local/share/flatpak/exports/share/applications") # Flatpak user
+        "/snap/bin"                                                        # Snap applications (Ubuntu)
     ]
-
-    mut icon = "error"
-
-    for location in $desktop_file_locations {
-        let desktop_file = $location | path join $"($app).desktop"
-        if ($desktop_file | path exists) {
-            try {
-                $icon = open --raw $desktop_file 
-                    | lines 
-                    | find 'Icon=' 
-                    | first 
-                    | str replace 'Icon=' ''
-                break
-            } catch {
-                # Continue if desktop file can't be read
-            }
+    | each {|location| 
+        $location | path join $"($app).desktop" 
+    }
+    | where {|file| $file | path exists }
+    | each {|desktop_file|
+        try {
+            open --raw $desktop_file 
+            | lines 
+            | find 'Icon='
+            | first
+            | default ""
+            | str replace 'Icon=' ''
+        } catch {
+            ""
         }
     }
-
-    $icon
+    | where {|icon| $icon != "" }
+    | get 0? 
+    | default "error"
 }
 
-# Main function - monitor systemd journal and send notifications
-export def main [] {
-    print "Starting journald desktop notifications monitor..."
-    print $"Monitoring journal entries with priority <= ($MAX_SYSTEMD_PRIO)"
-    
+# Process a journal entry and send notification if needed
+def process-journal-entry [
+    entry: record,    # Journal entry from journalctl
+    max_priority: int # Maximum priority level to notify for
+] {
     try {
-        journalctl --follow --priority=7 --output=json 
-        | from json --objects 
-        | each {|entry|
-            try {
-                let journalctl_prio = $entry | get PRIORITY | into int
+        # Skip entries without required fields
+        if not ('PRIORITY' in $entry and 'MESSAGE' in $entry) {
+            return
+        }
 
-                if $journalctl_prio <= $MAX_SYSTEMD_PRIO {
-                    let notify_prio = journalctl-prio-to-notify-prio $journalctl_prio
+        let journalctl_prio = ($entry | get PRIORITY | into int)
 
-                    let message: string = $entry 
-                        | get MESSAGE 
-                        | str replace --regex '^.*\.service: ' ''
+        if $journalctl_prio <= $max_priority {
+            let notify_prio = (journalctl-prio-to-notify-prio $journalctl_prio)
 
-                    if ('_SYSTEMD_USER_UNIT' in $entry) {
-                        let app: string = $entry 
-                            | get '_SYSTEMD_USER_UNIT' 
-                            | str replace --regex '@.*\.service$' "" 
-                            | str replace 'app-' ''
+            let message = ($entry 
+                | get MESSAGE 
+                | str replace --regex '^.*\.service: ' ''
+                | str replace --all '\\"' '"'
+                | str trim)
 
-                        let icon = get-icon-from-unit $app
+            # Only process user units for now
+            if ('_SYSTEMD_USER_UNIT' in $entry) {
+                let app = ($entry 
+                    | get '_SYSTEMD_USER_UNIT' 
+                    | str replace --regex '\.service$' "" 
+                    | str replace --regex '@.*$' ""
+                    | str replace 'app-' ''
+                    | str trim)
 
-                        let args = [
-                            --urgency=($notify_prio) 
-                            --app-name=($app) 
-                            --icon=($icon) 
-                            ($message)
-                        ]
-
-                        try {
-                            notify-send ...($args) | ignore
-                        } catch {
-                            print $"Failed to send notification for ($app): ($message)"
-                        }
-                    }
+                # Skip empty app names or messages
+                if ($app | is-empty) or ($message | is-empty) {
+                    return
                 }
-            } catch {
-                # Skip malformed journal entries
+
+                let icon = (get-icon-from-unit $app)
+
+                let args = [
+                    --urgency=($notify_prio) 
+                    --app-name=($app) 
+                    --icon=($icon) 
+                    ($message)
+                ]
+
+                try {
+                    ^notify-send ...$args | ignore
+                } catch { |err|
+                    print $"Failed to send notification for ($app): ($err.msg)"
+                }
             }
-        } | ignore
-    } catch {
-        print "Error: Failed to connect to systemd journal"
-        print "Make sure you have permission to read the journal"
+        }
+    } catch { |err|
+        # Skip malformed journal entries silently
     }
 }
 
@@ -102,51 +113,35 @@ export def main [] {
 export def start-monitoring [
     max_priority: int = 3  # Maximum priority level to notify for
 ] {
-    print $"Starting monitoring with max priority: ($max_priority)"
+    if $max_priority < 0 or $max_priority > 7 {
+        error make {msg: "Priority must be between 0 and 7"}
+    }
+
+    print $"Starting journald desktop notifications monitor..."
+    print $"Monitoring journal entries with priority <= ($max_priority)"
     
     try {
-        journalctl --follow --priority=7 --output=json 
-        | from json --objects 
-        | each {|entry|
+        ^journalctl --follow --priority=7 --output=json 
+        | lines
+        | where {|line| ($line | str trim | str length) > 0 }
+        | each {|line| 
             try {
-                let journalctl_prio = $entry | get PRIORITY | into int
-
-                if $journalctl_prio <= $max_priority {
-                    let notify_prio = journalctl-prio-to-notify-prio $journalctl_prio
-
-                    let message: string = $entry 
-                        | get MESSAGE 
-                        | str replace --regex '^.*\.service: ' ''
-
-                    if ('_SYSTEMD_USER_UNIT' in $entry) {
-                        let app: string = $entry 
-                            | get '_SYSTEMD_USER_UNIT' 
-                            | str replace --regex '@.*\.service$' "" 
-                            | str replace 'app-' ''
-
-                        let icon = get-icon-from-unit $app
-
-                        let args = [
-                            --urgency=($notify_prio) 
-                            --app-name=($app) 
-                            --icon=($icon) 
-                            ($message)
-                        ]
-
-                        try {
-                            notify-send ...($args) | ignore
-                        } catch {
-                            print $"Failed to send notification for ($app): ($message)"
-                        }
-                    }
-                }
+                let entry = ($line | from json)
+                process-journal-entry $entry $max_priority
             } catch {
-                # Skip malformed journal entries
+                # Skip malformed JSON lines silently
             }
-        } | ignore
+        }
+        | ignore
     } catch {
         print "Error: Failed to connect to systemd journal"
+        print "Make sure you have permission to read the journal"
     }
+}
+
+# Main function - monitor systemd journal and send notifications
+export def main [] {
+    start-monitoring $MAX_SYSTEMD_PRIO
 }
 
 # Test the notification system
@@ -154,7 +149,7 @@ export def test-notification [] {
     print "Testing notification system..."
     
     try {
-        notify-send --urgency=normal --app-name="journald-notify-nu" --icon="info" "Test notification from journald-notify-nu"
+        ^notify-send --urgency=normal --app-name="journald-notify-nu" --icon="info" "Test notification from journald-notify-nu"
         print "Test notification sent successfully"
     } catch {
         print "Error: Failed to send test notification"
