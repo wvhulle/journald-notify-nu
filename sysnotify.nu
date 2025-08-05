@@ -78,7 +78,9 @@ def process-journal-entry [
     let icon = get-icon-from-unit $app
 
     try {
-        ^notify-send --urgency=$urgency --app-name=$app --icon=$icon $message
+        ^notify-send --urgency=$urgency --app-name=$app --icon=$icon --hint=string:sound-name:message-new-instant $message
+        # Play system beep as fallback
+        ^printf "\a" | ignore
     } catch { |err|
         print $"Failed to send notification for ($app): ($err.msg)"
     }
@@ -116,7 +118,9 @@ export def test [] {
     print "Testing notification system..."
     
     try {
-        ^notify-send --urgency=normal --app-name="journald-notify-nu" --icon="info" "Test notification from journald-notify-nu"
+        ^notify-send --urgency=normal --app-name="journald-notify-nu" --icon="info" --hint=string:sound-name:message-new-instant "Test notification from journald-notify-nu"
+        # Play system beep as fallback
+        ^printf "\a" | ignore
         print "Test notification sent successfully"
     } catch {
         error make {msg: "Failed to send test notification. Make sure notify-send is available in your PATH"}
