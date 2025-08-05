@@ -1,37 +1,23 @@
-# Journald Desktop Notifications
+# sysnotify
 
-Nushell package for converting systemd journal entries to desktop notifications.
+Desktop notifications for systemd service failures.
 
-## Installation
-
-```nushell
-use ~/Code/journald-notify-nu
+Install:
+```bash
+git clone https://github.com/wvhulle/sysnotify ~/.config/nushell/modules/sysnotify
+echo "use ~/.config/nushell/modules/sysnotify" >> ~/.config/nushell/config.nu
 ```
 
-## Usage
-
-```nushell
-# Start monitoring (default: priorities 0-3)
-journald-notify-nu
-
-# Custom threshold
-start-monitoring 4
-
-# Test notifications
-test-notification
+Test without installing:
+```bash
+nu -c "source sysnotify.nu; test"
 ```
 
-## Priority Levels
+Usage:
+```nushell
+sysnotify          # Monitor failures (priority ≤3)
+sysnotify -p 4     # Custom priority threshold
+sysnotify test     # Test notifications
+```
 
-Systemd priorities 0-7 (default monitors 0-3):
-- 0: Emergency → Critical notification
-- 1: Alert → Critical notification  
-- 2: Critical → Critical notification
-- 3: Error → Normal notification
-- 4: Warning → Normal notification
-- 5+: Notice/Info/Debug → Low priority notification
-
-## Requirements
-
-- Nushell, `journalctl`, `notify-send`
-- Permission to read systemd journal
+Requires `journalctl` and `notify-send`.

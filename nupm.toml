@@ -1,10 +1,10 @@
 [package]
-name = "journald-notify-nu"
+name = "sysnotify"
 version = "0.1.0"
-description = "A nushell package for converting systemd journal entries to desktop notifications"
+description = "Desktop notifications for systemd service failures"
 license = "MIT"
 authors = ["wvhulle"]
-repository = "https://github.com/wvhulle/journald-notify-nu"
+repository = "https://github.com/wvhulle/sysnotify"
 
 [dependencies]
 
